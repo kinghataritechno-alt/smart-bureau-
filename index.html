@@ -416,6 +416,12 @@ html{-webkit-tap-highlight-color:transparent}
   <div id="askMsg" style="font-size:17px;white-space:pre-line"></div>
   <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" id="askNo">ยกเลิก</button><button class="btn pri" id="askYes">ยืนยัน</button></div>
 </div></div>
+<div class="modal" id="pasteModal" role="dialog" aria-modal="true" aria-labelledby="pasteTitle"><div class="box" style="width:min(560px,100%)">
+  <h2 id="pasteTitle">วางข้อมูลสำรอง</h2><div class="sub">คัดลอกข้อความข้อมูลสำรอง (JSON) จากหน้าไฟล์ติดตั้ง แล้ววางในช่องนี้</div>
+  <textarea class="inp" id="pasteBox" style="min-height:160px;margin-top:10px;font-size:13px" placeholder='{"app":"building-ops-report", …}'></textarea>
+  <div class="err" id="pasteErr" role="alert"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:10px"><button class="btn ghost" id="pasteCancel">ยกเลิก</button><button class="btn pri" id="pasteOk">ตรวจและนำเข้า</button></div>
+</div></div>
 <div class="modal" id="pinModal" role="dialog" aria-modal="true" aria-labelledby="pinTitle"><div class="box">
   <h2 id="pinTitle">เข้าสู่โหมดแอดมิน</h2><div class="sub" id="pinSub">ใส่รหัสผ่าน 6 หลัก</div>
   <div id="pinFields" style="display:flex;flex-direction:column;gap:10px;margin-top:12px"></div>
@@ -882,7 +888,7 @@ function renderHistory(){
   }
   app.innerHTML=adminBar()+bannerHTML()+`<div class="rowbar"><h1>รายงานย้อนหลัง</h1>
     <button class="btn sm" data-act="mprev" aria-label="เดือนก่อน" ${calMonth<=PROJECT.start.slice(0,7)?"disabled":""}>‹</button><b>${thDate(first,{month:"long",year:"numeric"})}</b><button class="btn sm" data-act="mnext" aria-label="เดือนถัดไป" ${calMonth>=PROJECT.end.slice(0,7)?"disabled":""}>›</button>
-    ${isAdmin()?`<button class="btn sm" data-act="csvMonth">ส่งออกเดือนนี้ (Excel)</button><button class="btn sm ghost" data-act="csvAll">ส่งออกทั้งสัญญา</button><button class="btn sm ghost" data-act="jsonOut">สำรองข้อมูล (JSON)</button><button class="btn sm ghost" data-act="jsonIn">นำเข้าข้อมูลสำรอง</button>`:""}</div>
+    ${isAdmin()?`<button class="btn sm" data-act="csvMonth">ส่งออกเดือนนี้ (Excel)</button><button class="btn sm ghost" data-act="csvAll">ส่งออกทั้งสัญญา</button><button class="btn sm ghost" data-act="jsonOut">สำรองข้อมูล (JSON)</button><button class="btn sm ghost" data-act="jsonIn">นำเข้าข้อมูลสำรอง</button><button class="btn sm ghost" data-act="jsonPaste">วางข้อมูลสำรอง</button>`:""}</div>
     <div class="sub" style="margin-bottom:10px">เลือกวันที่เพื่อดูรายงาน สีเขียว = ครบและไม่พบปัญหา สีเหลือง = มีปัญหาหรือรายการค้าง${isAdmin()?` กรอบประ = ยังไม่มีรายงาน กดวันที่เพื่อบันทึกย้อนหลัง`:""}</div>
     ${isAdmin()&&missing?`<div class="backfill">เดือนนี้ยังไม่มีรายงาน ${missing} กะ (นับตั้งแต่รายงานแรกในระบบ)</div><div style="height:10px"></div>`:""}
     <div class="cal">${["จ","อ","พ","พฤ","ศ","ส","อา"].map(x=>`<div class="dow">${x}</div>`).join("")}${cells}</div>`;
@@ -1127,20 +1133,25 @@ async function exportJson(){
     else{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);toast(`สำรองแล้ว ${Object.keys(out.reports).length} กะ`)}
   }catch(e){busy(false);toast("สำรองไม่สำเร็จ ("+errText(e)+")")}
 }
-async function importJson(file){
-  let data;try{data=JSON.parse(await file.text())}catch(e){toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของระบบ");return}
-  if(!data||data.app!=="building-ops-report"||!data.reports){toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของระบบ");return}
+async function importJson(file){return importJsonText(await file.text())}
+async function importJsonText(text){
+  let data;try{data=JSON.parse(String(text||"").trim())}catch(e){toast("ข้อความนี้ไม่ใช่ข้อมูลสำรองของระบบ หรือวางมาไม่ครบ");return false}
+  if(!data||data.app!=="building-ops-report"||!data.reports){toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของระบบ");return false}
+  if(!Object.keys(data.reports).length){toast("ไฟล์นี้เป็นไฟล์สำรองที่ว่างเปล่า (ไม่มีรายงาน) กรุณาเลือกไฟล์ที่มีข้อมูล");return false}
   const ids=Object.keys(data.reports).filter(id=>inProject(id.slice(0,10)));
-  if(!await ask(`นำเข้าข้อมูลสำรอง ${ids.length} กะ และภาพ ${Object.keys(data.images||{}).length} ภาพ\nรายงานที่มีอยู่แล้วจะถูกแทนที่ด้วยฉบับที่ใหม่กว่า`,"นำเข้า"))return;
-  busy(true,"กำลังนำเข้า…");let nr=0,ni=0,fail=0;
+  if(!await ask(`นำเข้าข้อมูลสำรอง ${ids.length} กะ และภาพ ${Object.keys(data.images||{}).length} ภาพ\nรายงานที่มีอยู่แล้วจะถูกแทนที่ด้วยฉบับที่ใหม่กว่า`,"นำเข้า"))return false;
+  busy(true,"กำลังนำเข้า…");let nr=0,ni=0,fail=0,lastErr="";
   try{
-    for(const [iid,d] of Object.entries(data.images||{})){$("#busyText").textContent=`กำลังนำเข้าภาพ ${ni+1}`;try{if(mode==="cloud")await db.doc("images/"+iid).set({data:d,at:Date.now()});imgCache[iid]=d;ni++}catch(e){fail++}}
+    for(const [iid,d] of Object.entries(data.images||{})){$("#busyText").textContent=`กำลังนำเข้าภาพ ${ni+1}`;try{if(mode==="cloud")await db.doc("images/"+iid).set({data:d,at:Date.now()});imgCache[iid]=d;ni++}catch(e){fail++;lastErr=errText(e)}}
     for(const id of ids){const r=data.reports[id],cur=reports[id];if(cur&&(cur.updatedAt||0)>(r.updatedAt||0))continue;$("#busyText").textContent=`กำลังนำเข้ารายงาน ${nr+1}/${ids.length}`;
-      try{if(mode==="cloud")await db.collection("reports").doc(id).set(r);reports[id]=r;nr++}catch(e){fail++}}
+      try{if(mode==="cloud")await db.collection("reports").doc(id).set(r);reports[id]=r;nr++}catch(e){fail++;lastErr=errText(e)}}
     if(mode!=="cloud")localWrite();
   }finally{busy(false)}
-  toast(`นำเข้าแล้ว ${nr} กะ ${ni} ภาพ${fail?` (ไม่สำเร็จ ${fail})`:""}`);render();
+  toast(`นำเข้าแล้ว ${nr} กะ ${ni} ภาพ${fail?` (ไม่สำเร็จ ${fail}${lastErr?": "+lastErr:""})`:""}`);render();return true;
 }
+$("#pasteCancel").onclick=()=>$("#pasteModal").classList.remove("on");
+$("#pasteOk").onclick=async()=>{const t=$("#pasteBox").value;if(!t.trim()){$("#pasteErr").textContent="ยังไม่ได้วางข้อมูล";return}
+  $("#pasteModal").classList.remove("on");const ok=await importJsonText(t);if(ok===false){$("#pasteModal").classList.add("on")}else $("#pasteBox").value=""};
 $("#jsonPicker").onchange=e=>{const f=e.target.files[0];if(f)importJson(f)};
 async function savePdf(pdf,name){
   const blob=pdf.output("blob");
@@ -1252,6 +1263,7 @@ app.addEventListener("click",async e=>{
     case "mprev":case "mnext":{const d=new Date(calMonth+"-01T00:00:00");d.setMonth(d.getMonth()+(act==="mprev"?-1:1));const m=iso(d).slice(0,7);if(m<PROJECT.start.slice(0,7)||m>PROJECT.end.slice(0,7))break;calMonth=m;renderHistory();break}
     case "csvMonth":exportCsv(calMonth+"-01",addDays(iso(new Date(+calMonth.slice(0,4),+calMonth.slice(5,7),1)),-1),`ข้อมูลรายงาน_${calMonth}`);break;
     case "jsonOut":exportJson();break;
+    case "jsonPaste":$("#pasteErr").textContent="";$("#pasteBox").value="";$("#pasteModal").classList.add("on");setTimeout(()=>$("#pasteBox").focus(),50);break;
     case "jsonIn":$("#jsonPicker").value="";$("#jsonPicker").click();break;
     case "csvAll":exportCsv(PROJECT.start,PROJECT.end,"ข้อมูลรายงาน_ทั้งสัญญา_2569-2570");break;
     case "wprev":weekStart=addDays(weekStart,-7);renderWeekly();break;
