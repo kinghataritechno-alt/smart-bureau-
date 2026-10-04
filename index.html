@@ -4,11 +4,64 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>รายงานการบริหารอาคาร · สำนักงานงบประมาณ</title>
+<meta name="robots" content="noindex">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@500;600&family=Sarabun:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js" crossorigin="anonymous"></script>
+<script>
+/* Supabase backend for the building report (Vercel edition).
+   Provides the same small API the app uses on claude.ai: claude.use("db"|"assets"|"user"|"downloads"). */
+(function(){
+  var SUPABASE_URL="https://menuykqowuwcqjizvdpn.supabase.co", SUPABASE_KEY="sb_publishable_lZ8gl0kbAU-EzFbUhnWsWQ_l4ar4wDN", BUCKET="photos";
+  if(!window.supabase){window.__sbError="load";return}
+  if(!SUPABASE_KEY||SUPABASE_KEY.indexOf("__")===0){window.__sbError="key";return}
+  var sb=window.supabase.createClient(SUPABASE_URL,SUPABASE_KEY,{auth:{persistSession:false,autoRefreshToken:true}});
+  window.__sb=sb;
+  var pub=function(p){return sb.storage.from(BUCKET).getPublicUrl(p).data.publicUrl};
+  window.__assetBase=pub("files/");
+  var session=null;
+  function chk(r){if(r&&r.error){var e=new Error(r.error.message);e.code=r.error.code||"error";throw e}return r}
+  async function toBlob(d){return (await fetch(d)).blob()}
+  function docRef(path){
+    var p=path.split("/"),col=p[0],id=p[1];
+    if(col==="reports")return{
+      get:async function(){var r=chk(await sb.from("reports").select("data").eq("id",id).maybeSingle());return{exists:!!r.data,data:function(){return r.data&&r.data.data}}},
+      set:async function(v){chk(await sb.from("reports").upsert({id:id,date:v.date,shift:v.shift,data:v,updated_at:new Date().toISOString()}))},
+      delete:async function(){chk(await sb.from("reports").delete().eq("id",id))}};
+    if(col==="images")return{
+      get:async function(){return{exists:true,data:function(){return{data:pub("img/"+id+".jpg")}}}},
+      set:async function(v){var b=await toBlob(v.data);chk(await sb.storage.from(BUCKET).upload("img/"+id+".jpg",b,{contentType:"image/jpeg",upsert:true}))},
+      delete:async function(){await sb.storage.from(BUCKET).remove(["img/"+id+".jpg"])}};
+    return{get:async function(){return{exists:false,data:function(){return null}}},set:async function(){},delete:async function(){}};
+  }
+  var reportsCol={
+    doc:function(id){return docRef("reports/"+id)},
+    orderBy:function(){return{limit:function(n){return{onSnapshot:function(next,onErr){
+      var alive=true;
+      async function load(){var r=await sb.from("reports").select("id,data").order("date",{ascending:false}).limit(n);
+        if(r.error){if(onErr)onErr(r.error);return}if(alive)next({docs:r.data.map(function(x){return{id:x.id,data:function(){return x.data}}})})}
+      load();
+      var ch=null;try{ch=sb.channel("reports-live").on("postgres_changes",{event:"*",schema:"public",table:"reports"},function(){load()}).subscribe(function(st,err){if(err)console.warn("realtime off:",err)})}catch(e){console.warn("realtime off:",e)}
+      var t=setInterval(load,60000);
+      document.addEventListener("visibilitychange",function(){if(!document.hidden)load()});
+      return function(){alive=false;clearInterval(t);if(ch)try{sb.removeChannel(ch)}catch(e){}}}}}}}
+  };
+  var db={collection:function(c){return c==="reports"?reportsCol:{doc:function(id){return docRef(c+"/"+id)}}},doc:docRef};
+  var assets={
+    upload:async function(file,o){var id="f"+Math.random().toString(36).slice(2)+Date.now().toString(36);chk(await sb.storage.from(BUCKET).upload("files/"+id,file,{contentType:(o&&o.type)||file.type}));return{id:id,url:pub("files/"+id)}},
+    delete:async function(id){await sb.storage.from(BUCKET).remove(["files/"+id])},
+    list:async function(){return{assets:[]}}};
+  var user={can:async function(){return !!session},id:async function(){return session&&session.user.id},isOwner:function(){return false}};
+  window.__auth={kind:"email",
+    signIn:async function(email,pw){var r=await sb.auth.signInWithPassword({email:email,password:pw});if(r.error)throw r.error;session=r.data.session;return true},
+    signOut:async function(){try{await sb.auth.signOut()}catch(e){}session=null}};
+  window.claude={use:async function(k){return {db:db,assets:assets,user:user,downloads:null}[k]||null}};
+})();
+</script>
+
 <style>
 :root{
   box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);
@@ -217,6 +270,65 @@ details.imp[open] summary{margin-bottom:8px}
 @media (max-width:560px){.thumb{width:84px;height:84px}.rrow{grid-template-columns:1fr}.rctl{justify-content:flex-start}.brand img{height:34px}}
 
 /* ===== PDF stage: A4 template (fixed light palette) ===== */
+/* ---------- responsive: phone and iPad ---------- */
+html{-webkit-tap-highlight-color:transparent}
+.banner a{word-break:break-all}
+.tab .ts{display:none}
+.daynav{display:flex;gap:8px;align-items:center;margin:12px 0 4px;flex-wrap:wrap}
+.daynav .inp{width:auto;flex:0 1 200px}
+.pickday{margin-top:0;margin-bottom:14px}.pickday .row{margin-top:6px}
+.contract .row{flex-wrap:wrap;gap:4px 12px}
+@media (max-width:1024px){
+  .kpis{grid-template-columns:repeat(auto-fit,minmax(140px,1fr))}
+  .inp,select.inp,textarea.inp,.rmore .inp,#pkPaste,#lineImport{font-size:16px} /* 16px+ stops iOS zooming on focus */
+  main{padding:16px 14px 110px}
+  .top-in{padding:8px 14px 0;gap:4px 16px}
+}
+@media (max-width:820px){
+  .brand{padding-bottom:6px}
+  .brand b{font-size:18px}
+  .tabs{width:100%}
+  .tab{flex:1 1 auto;padding:9px 10px;font-size:15px;text-align:center}
+  .kpi b,#app .kpi b{font-size:30px}
+  .rowbar h1{font-size:21px}
+  .cgrid b{font-size:20px}
+}
+@media (max-width:600px){
+  .co-long,.lg{display:none}
+  .brand{gap:8px;flex-basis:100%}
+  .brand img{height:30px;padding:2px 4px}
+  .brand b{font-size:16px}
+  .brand small{font-size:12px;display:block;line-height:1.3}
+  .mode{font-size:11px;padding:0 7px;margin-left:4px}
+  .tab{padding:8px 6px;font-size:14px;border-radius:8px 8px 0 0}
+  main{padding:12px 12px 96px}
+  .kpis{grid-template-columns:repeat(2,minmax(0,1fr));gap:8px}
+  #app .kpi{padding:10px 12px}
+  #app .kpi b{font-size:26px}
+  .kpi span{font-size:13px}.kpi em{font-size:12px}
+  .card{padding:12px;margin-top:12px}
+  .contract h3{flex:1 1 100% !important}
+  .daynav{display:grid;grid-template-columns:auto 1fr auto}.daynav .inp{width:100%}
+  .cgrid{grid-template-columns:repeat(3,minmax(0,1fr));gap:8px}
+  .cgrid span{font-size:11px;line-height:1.3;min-height:28px}
+  .cgrid b{font-size:17px}
+  .cgrid b small{font-size:11px;display:block}
+  .cgrid .sub{font-size:11px!important}
+  .tab .tl{display:none}.tab .ts{display:inline}
+  .tabs{display:grid;grid-template-columns:repeat(auto-fit,minmax(0,1fr));gap:2px}
+  .sec-h{padding:8px 12px}.sec-h h2{font-size:17px}
+  .item{grid-template-columns:22px 1fr;padding:10px}
+  .num{font-size:17px}
+  .savebar{padding:8px 10px calc(8px + env(safe-area-inset-bottom,0px))}
+  .savebar-in{display:grid;grid-template-columns:1fr 1fr 1.4fr;gap:6px}
+  .savebar .state{grid-column:1/-1;font-size:12px;margin:0}
+  .savebar .btn{justify-content:center;padding:9px 6px}
+  .pkbig b{font-size:22px}
+  .pk th,.pk td{padding:5px 3px}
+  .pk input.qty{max-width:80px}
+  .modal .box{padding:16px}
+  .toast{bottom:calc(84px + env(safe-area-inset-bottom,0px))}
+}
 #stage{--grid:#E3E6EC;position:absolute;left:0;top:0;z-index:-1;font-family:var(--fb);color:#1A2233;background:#fff;line-height:1.5}
 #stage .pg{background:#fff;padding:0 57px;width:794px}
 #stage .pg.land{width:1123px}
@@ -286,7 +398,7 @@ details.imp[open] summary{margin-bottom:8px}
   <div class="top-in">
     <div class="brand">
       <img id="hdrLogo" alt="Smart Terminal">
-      <div><b>รายงานการบริหารอาคาร<span class="mode" id="mode">กำลังเชื่อมต่อ…</span></b><small>งานบริหารอาคาร สำนักงานงบประมาณ · บริษัท สมาร์ท เทอร์มินอล จำกัด</small></div>
+      <div><b>รายงานการบริหารอาคาร<span class="mode" id="mode">กำลังเชื่อมต่อ…</span></b><small>งานบริหารอาคาร สำนักงานงบประมาณ<span class="co-long"> · บริษัท สมาร์ท เทอร์มินอล จำกัด</span></small></div>
     </div>
     <nav class="tabs" role="tablist" id="tabs"></nav>
   </div>
@@ -295,8 +407,8 @@ details.imp[open] summary{margin-bottom:8px}
 <div class="savebar" id="savebar" hidden>
   <div class="savebar-in">
     <span class="state" id="saveState">ยังไม่มีการแก้ไข</span>
-    <button class="btn" id="bLine">คัดลอกข้อความส่ง LINE</button>
-    <button class="btn gold" id="bPdf">ดาวน์โหลด PDF</button>
+    <button class="btn" id="bLine"><span class="lg">คัดลอกข้อความส่ง </span>LINE</button>
+    <button class="btn gold" id="bPdf"><span class="lg">ดาวน์โหลด </span>PDF</button>
     <button class="btn pri" id="bSave">บันทึกรายงาน</button>
   </div>
 </div>
@@ -314,6 +426,7 @@ details.imp[open] summary{margin-bottom:8px}
 <div class="toast" id="toast" role="status"></div>
 <div class="busy" id="busy" role="status"><span id="busyText">กำลังสร้าง PDF…</span><span class="sub">กรุณารอสักครู่ อย่าปิดหน้านี้</span></div>
 <div id="stage" aria-hidden="true"></div>
+<input type="file" id="jsonPicker" accept="application/json,.json" hidden>
 <input type="file" id="picker" accept="image/*,video/mp4,video/webm,application/pdf" multiple hidden>
 
 <script>
@@ -399,7 +512,7 @@ const thShort=s=>thDate(s,{day:"numeric",month:"short"});
 /* asset URL resolution: some views (e.g. iPad Safari) do not resolve the root-relative /_blob/ path */
 const urlCache={};let blobBase=null,sharedBase=null;
 try{blobBase=localStorage.getItem("dr-blobbase")}catch(e){}
-function candidates(id){const c=[];if(urlCache[id])c.push(urlCache[id]);if(blobBase)c.push(blobBase+id);if(sharedBase)c.push(sharedBase+id);c.push("/_blob/"+id);try{if(/^https?:/.test(location.href))c.push(new URL("/_blob/"+id,location.href).href)}catch(e){}return [...new Set(c)]}
+function candidates(id){const c=[];if(window.__assetBase)c.push(window.__assetBase+id);if(urlCache[id])c.push(urlCache[id]);if(blobBase)c.push(blobBase+id);if(sharedBase)c.push(sharedBase+id);c.push("/_blob/"+id);try{if(/^https?:/.test(location.href))c.push(new URL("/_blob/"+id,location.href).href)}catch(e){}return [...new Set(c)]}
 const assetUrl=id=>candidates(id)[0];
 function refreshLogo(){}
 const PH="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7";
@@ -420,7 +533,7 @@ function toDbImage(file){return new Promise((res,rej)=>{const img=new Image(),ur
   img.onerror=()=>{URL.revokeObjectURL(url);rej(new Error("อ่านไฟล์ภาพไม่ได้"))};img.src=url})}
 function learnBase(id,url){if(!url)return;urlCache[id]=url;if(url.endsWith(id)&&url!=="/_blob/"+id){const b=url.slice(0,-id.length);if(b!==blobBase){blobBase=b;try{localStorage.setItem("dr-blobbase",b)}catch(e){}
   if(db&&canWrite&&b!==sharedBase){sharedBase=b;db.doc("config/blob").set({base:b,at:Date.now()}).catch(()=>{})}}}}
-document.addEventListener("error",e=>{const im=e.target;if(!im||im.tagName!=="IMG"||!im.dataset.aid)return;const c=candidates(im.dataset.aid),n=+(im.dataset.try||0)+1;
+document.addEventListener("error",e=>{const im=e.target;if(im&&im.tagName==="IMG"&&im.dataset.img&&!im.dataset.aid&&im.src!==PH){const t=im.closest(".thumb");if(t){t.classList.add("broken");im.replaceWith(Object.assign(document.createElement("span"),{textContent:"ภาพยังโหลดไม่ได้"}))}return}if(!im||im.tagName!=="IMG"||!im.dataset.aid)return;const c=candidates(im.dataset.aid),n=+(im.dataset.try||0)+1;
   if(n<c.length){im.dataset.try=n;im.src=c[n]}else if(im.id==="hdrLogo")im.style.display="none";else if(im.closest(".thumb")){const t=im.closest(".thumb");t.classList.add("broken");im.replaceWith(Object.assign(document.createElement("span"),{textContent:"ภาพยังโหลดไม่ได้ ลองรีเฟรช"}))}},true);
 const isAdmin=()=>canWrite&&!clientView;
 function toast(t){const el=$("#toast");el.textContent=t;el.classList.add("on");clearTimeout(toast._t);toast._t=setTimeout(()=>el.classList.remove("on"),2600)}
@@ -711,9 +824,9 @@ function chartsHTML(W,print){
 
 /* ---------- render ---------- */
 function tabsHTML(){
-  const t=[["overview","ภาพรวม"],["history","รายงานย้อนหลัง"],["weekly","สรุปรายสัปดาห์"]];
-  if(isAdmin())t.push(["edit","บันทึกข้อมูล"]);
-  return t.map(([k,l])=>`<button class="tab ${k==="edit"?"admin":""}" role="tab" data-tab="${k}" aria-selected="${view===k||(view==="day"&&k==="history")}">${l}</button>`).join("");
+  const t=[["overview","ภาพรวม","ภาพรวม"],["history","รายงานย้อนหลัง","ย้อนหลัง"],["weekly","สรุปรายสัปดาห์","รายสัปดาห์"]];
+  if(isAdmin())t.push(["edit","บันทึกข้อมูล","บันทึก"]);
+  return t.map(([k,l,sh])=>`<button class="tab ${k==="edit"?"admin":""}" role="tab" data-tab="${k}" aria-selected="${view===k||(view==="day"&&k==="history")}" aria-label="${l}"><span class="tl">${l}</span><span class="ts">${sh}</span></button>`).join("");
 }
 function render(){setTimeout(hydrate,0);
   if(view==="edit"&&!isAdmin())view="overview";
@@ -722,10 +835,12 @@ function render(){setTimeout(hydrate,0);
   if(view==="edit")renderEdit();else if(view==="history")renderHistory();else if(view==="day")renderDay();else if(view==="weekly")renderWeekly();else renderOverview();
 }
 function adminBar(){
+  if(window.__auth)return `<div class="rowbar" style="justify-content:flex-end;margin-bottom:6px">${isAdmin()?`<button class="btn sm" data-act="adminLogout">ออกจากโหมดแอดมิน</button>`:`<button class="btn sm adminbtn" data-act="adminLogin">🔒 สำหรับแอดมิน</button>`}</div>`;
   if(!canWrite)return "";
   return `<div class="rowbar" style="justify-content:flex-end;margin-bottom:6px">${clientView?`<button class="btn sm adminbtn" data-act="adminLogin">🔒 สำหรับแอดมิน</button>`:`<button class="btn sm" data-act="adminLogout">ออกจากโหมดแอดมิน</button>`}</div>`;
 }
 function bannerHTML(){
+  if(window.__sbError)return `<div class="banner"><b>ยังเชื่อมต่อฐานข้อมูลไม่สำเร็จ</b> ${window.__sbError==="key"?"ยังไม่ได้ใส่ anon key ของ Supabase":"โหลดตัวเชื่อมต่อ Supabase ไม่ได้ ตรวจสอบอินเทอร์เน็ตแล้วรีเฟรชหน้า"}</div>`;
   if(mode==="local")return `<div class="banner"><b>ไฟล์นี้ยังไม่ได้เชื่อมกับระบบกลาง</b> ข้อมูลที่บันทึกจะอยู่ในเบราว์เซอร์เครื่องนี้เท่านั้น ทีมงานและลูกค้าจะไม่เห็น กรุณาเปิดระบบจริงที่ <a href="https://claude.ai/artifact/45T87RrfkihnnyqnSCPihW" target="_blank" rel="noopener">claude.ai/artifact/45T87RrfkihnnyqnSCPihW</a></div>`;
   
   return "";
@@ -745,7 +860,7 @@ function contractHTML(){
 function renderOverview(){
   const ws=mondayOf(today()),W=weekData(ws),P=weekData(addDays(ws,-7));
   const latest=Object.values(reports).map(r=>normalize(clone(r))).sort((a,b)=>a.date===b.date?(a.shift==="night"?-1:1):(a.date<b.date?1:-1))[0];
-  let h=adminBar()+bannerHTML()+contractHTML()+`<div class="rowbar"><h1>ภาพรวมสัปดาห์นี้</h1><span class="sub">${thDate(ws,{day:"numeric",month:"long"})} – ${thDate(addDays(ws,6),{day:"numeric",month:"long",year:"numeric"})}</span></div>`+kpiHTML(kpiList(W,P));
+  let h=adminBar()+bannerHTML()+contractHTML()+`<div class="card pickday"><label class="f" for="ovPick">ดูรายงานตามวันที่</label><div class="row"><input class="inp" type="date" id="ovPick" min="${PROJECT.start}" max="${lastDay()}" value="${(prevReportDay(addDays(today(),1))||lastDay())}" style="max-width:220px"><span class="sub">เลือกวันที่ แล้วระบบจะเปิดรายงานของวันนั้น</span></div></div><div class="rowbar"><h1>ภาพรวมสัปดาห์นี้</h1><span class="sub">${thDate(ws,{day:"numeric",month:"long"})} – ${thDate(addDays(ws,6),{day:"numeric",month:"long",year:"numeric"})}</span></div>`+kpiHTML(kpiList(W,P));
   if(latest){const s=roundStats(latest),H=latest.handover;
     h+=`<div class="card"><h3>รายงานล่าสุด</h3><div class="row"><div style="flex:1;min-width:220px"><b>${thDate(latest.date)}</b> · ${SHIFTS[latest.shift]}<div class="sub">หัวหน้าเวร ${esc(H.head||"-")} · เดินเวร ${s.done}/${s.total}${s.issue?` · พบปัญหา ${s.issue}`:""} · งาน CM ${latest.sections.cm.length} · รถค้างคืน ${hasPk(latest)?pkSum(latest).total:latest.sections.parking.length} คัน</div></div>
       <button class="btn pri" data-open="${latest.date}|${latest.shift}">ดูรายงาน</button></div></div>`;
@@ -763,11 +878,11 @@ function renderHistory(){
   for(let i=1;i<=ndays;i++){
     const d=calMonth+"-"+String(i).padStart(2,"0");let dots="",any=false;
     ["day","night"].forEach(sh=>{const r=getR(rid(d,sh));if(!r){if(isAdmin()&&firstDate&&d>=firstDate&&d>=PROJECT.start&&d<today())dots+=`<span class="dot miss">${sh==="day"?"M":"AN"}?</span>`,missing++;return}any=true;const s=roundStats(r),bad=s.issue||s.done<s.total||r.sections.cm.some(x=>x.status!=="done");dots+=`<span class="dot ${bad?"warn":"ok"}">${sh==="day"?"M":"AN"}</span>`});
-    cells+=`<button class="cday ${d===today()?"today":""}" data-day="${d}" ${any||isAdmin()?"":"disabled"} aria-label="${thDate(d)}"><b>${i}</b><span class="dots">${dots}</span></button>`;
+    cells+=`<button class="cday ${d===today()?"today":""}" data-day="${d}" ${inProject(d)&&d<=today()?"":"disabled"} aria-label="${thDate(d)}${any?"":" ยังไม่มีรายงาน"}"><b>${i}</b><span class="dots">${dots}</span></button>`;
   }
   app.innerHTML=adminBar()+bannerHTML()+`<div class="rowbar"><h1>รายงานย้อนหลัง</h1>
     <button class="btn sm" data-act="mprev" aria-label="เดือนก่อน" ${calMonth<=PROJECT.start.slice(0,7)?"disabled":""}>‹</button><b>${thDate(first,{month:"long",year:"numeric"})}</b><button class="btn sm" data-act="mnext" aria-label="เดือนถัดไป" ${calMonth>=PROJECT.end.slice(0,7)?"disabled":""}>›</button>
-    ${isAdmin()?`<button class="btn sm" data-act="csvMonth">ส่งออกเดือนนี้ (Excel)</button><button class="btn sm ghost" data-act="csvAll">ส่งออกทั้งสัญญา</button>`:""}</div>
+    ${isAdmin()?`<button class="btn sm" data-act="csvMonth">ส่งออกเดือนนี้ (Excel)</button><button class="btn sm ghost" data-act="csvAll">ส่งออกทั้งสัญญา</button><button class="btn sm ghost" data-act="jsonOut">สำรองข้อมูล (JSON)</button><button class="btn sm ghost" data-act="jsonIn">นำเข้าข้อมูลสำรอง</button>`:""}</div>
     <div class="sub" style="margin-bottom:10px">เลือกวันที่เพื่อดูรายงาน สีเขียว = ครบและไม่พบปัญหา สีเหลือง = มีปัญหาหรือรายการค้าง${isAdmin()?` กรอบประ = ยังไม่มีรายงาน กดวันที่เพื่อบันทึกย้อนหลัง`:""}</div>
     ${isAdmin()&&missing?`<div class="backfill">เดือนนี้ยังไม่มีรายงาน ${missing} กะ (นับตั้งแต่รายงานแรกในระบบ)</div><div style="height:10px"></div>`:""}
     <div class="cal">${["จ","อ","พ","พฤ","ศ","ส","อา"].map(x=>`<div class="dow">${x}</div>`).join("")}${cells}</div>`;
@@ -794,6 +909,14 @@ function reportBody(r){
     h+=`</div>`});
   return h;
 }
+const reportDays=()=>[...new Set(Object.keys(reports).map(k=>k.slice(0,10)))].sort();
+const prevReportDay=d=>reportDays().filter(x=>x<d).pop()||null;
+const nextReportDay=d=>reportDays().find(x=>x>d)||null;
+function dayNavHTML(d){const pv=prevReportDay(d),nx=nextReportDay(d);
+  return `<div class="daynav"><button class="btn sm" data-goday="${pv||""}" ${pv?"":"disabled"} aria-label="รายงานก่อนหน้า">‹ ${pv?thDate(pv,{day:"numeric",month:"short"}):"ก่อนหน้า"}</button>
+    <input class="inp" type="date" id="dayPick" min="${PROJECT.start}" max="${lastDay()}" value="${d}" aria-label="เลือกวันที่">
+    <button class="btn sm" data-goday="${nx||""}" ${nx?"":"disabled"} aria-label="รายงานถัดไป">${nx?thDate(nx,{day:"numeric",month:"short"}):"ถัดไป"} ›</button></div>`}
+function goDay(d){if(!d)return;if(!inProject(d)||d>today()){toast("เลือกได้เฉพาะวันที่ในระยะสัญญาจนถึงวันนี้");return}dayView=d;view="day";render();window.scrollTo(0,0)}
 function renderDay(){
   const d=dayView;const has={day:!!reports[rid(d,"day")],night:!!reports[rid(d,"night")]};
   if(!has[dayShift]&&has[dayShift==="day"?"night":"day"])dayShift=dayShift==="day"?"night":"day";
@@ -803,8 +926,9 @@ function renderDay(){
     ${r&&isAdmin()?`<button class="btn" data-act="vline">คัดลอกส่ง LINE</button><button class="btn pri" data-act="vedit">แก้ไข</button><button class="btn del" data-act="vdel">ลบ</button>`:""}
     ${!r&&isAdmin()?`<button class="btn pri" data-act="vedit">${isPast(d)?"บันทึกย้อนหลังกะนี้":"บันทึกรายงานกะนี้"}</button>`:""}</div>
     <div class="vhead"><h2>${thDate(d)}${r&&r.firstSavedAt&&backfillInfo(r)?`<span class="tag">บันทึกย้อนหลังเมื่อ ${thDate(backfillInfo(r),{day:"numeric",month:"short",year:"numeric"})}</span>`:""}</h2><div>${r?`ผู้รายงาน ${esc(r.reporter||"-")}${r.note?" · "+esc(r.note):""}`:"ยังไม่มีรายงานกะนี้"}</div></div>
-    <div class="shifttabs">${Object.entries(SHIFTS).map(([k,v])=>`<button class="chip ${has[k]?"ok":"wait"}" data-shift="${k}" aria-pressed="${k===dayShift}">${v}${has[k]?"":" · ไม่มีรายงาน"}</button>`).join("")}</div>`;
+    ${dayNavHTML(d)}<div class="shifttabs">${Object.entries(SHIFTS).map(([k,v])=>`<button class="chip ${has[k]?"ok":"wait"}" data-shift="${k}" aria-pressed="${k===dayShift}">${v}${has[k]?"":" · ไม่มีรายงาน"}</button>`).join("")}</div>`;
   if(r)h+=reportBody(r);
+  else h+=`<div class="empty"><b>ยังไม่มีรายงานของ${has.day||has.night?"กะนี้":"วันนี้"}</b>${has.day||has.night?"เลือกอีกกะด้านบน":"เลือกวันอื่นจากช่องวันที่ หรือกดดูรายงานก่อนหน้า / ถัดไป"}</div>`;
   app.innerHTML=h;hydrate();
 }
 
@@ -953,7 +1077,7 @@ async function toData(url){if(dataCache[url])return dataCache[url];const r=await
 /* inline every image as a data: URL so the canvas is never tainted and nothing depends on how /_blob/ resolves */
 async function inlineImgs(el){
   for(const im of [...el.querySelectorAll("img")]){
-    if(im.dataset.img){try{im.src=await getImg(im.dataset.img);continue}catch(e){}}
+    if(im.dataset.img){try{const u=await getImg(im.dataset.img);im.src=u.startsWith("data:")?u:await toData(u);continue}catch(e){}}
     if(im.src.startsWith("data:")&&im.src!==PH)continue;
     const id=im.dataset.aid,urls=id?candidates(id):[im.getAttribute("src")];let ok=false;
     for(const u of urls){try{im.src=await toData(u);ok=true;break}catch(e){}}
@@ -992,6 +1116,32 @@ async function exportCsv(from,to,name){
   if(downloads){try{await downloads.save({filename:name+".csv",data:blob});toast(`ส่งออกแล้ว ${ids.length} กะ ${rows.length-1} แถว`)}catch(e){if(e&&e.code!=="declined")toast("ส่งออกไม่สำเร็จ ("+errText(e)+")")}}
   else{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name+".csv";document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);toast(`ส่งออกแล้ว ${ids.length} กะ`)}
 }
+/* ---------- full backup (reports + photos) as JSON; also used to move data to another backend ---------- */
+async function exportJson(){
+  busy(true,"กำลังรวบรวมข้อมูล…");
+  try{const out={app:"building-ops-report",version:1,exportedAt:new Date().toISOString(),reports:{},images:{}};
+    for(const id of Object.keys(reports).sort()){const r=getR(id);out.reports[id]=r;
+      for(const m of allMedia(r))if(m.img&&!out.images[m.img]){try{let d=await getImg(m.img);if(!d.startsWith("data:"))d=await toData(d);out.images[m.img]=d}catch(e){}}}
+    const blob=new Blob([JSON.stringify(out)],{type:"application/json"}),name=`สำรองข้อมูล_${today()}.json`;busy(false);
+    if(downloads){try{await downloads.save({filename:name,data:blob});toast(`สำรองแล้ว ${Object.keys(out.reports).length} กะ ${Object.keys(out.images).length} ภาพ`)}catch(e){if(e&&e.code!=="declined")toast("สำรองไม่สำเร็จ ("+errText(e)+")")}}
+    else{const a=document.createElement("a");a.href=URL.createObjectURL(blob);a.download=name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(a.href),5000);toast(`สำรองแล้ว ${Object.keys(out.reports).length} กะ`)}
+  }catch(e){busy(false);toast("สำรองไม่สำเร็จ ("+errText(e)+")")}
+}
+async function importJson(file){
+  let data;try{data=JSON.parse(await file.text())}catch(e){toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของระบบ");return}
+  if(!data||data.app!=="building-ops-report"||!data.reports){toast("ไฟล์นี้ไม่ใช่ไฟล์สำรองข้อมูลของระบบ");return}
+  const ids=Object.keys(data.reports).filter(id=>inProject(id.slice(0,10)));
+  if(!await ask(`นำเข้าข้อมูลสำรอง ${ids.length} กะ และภาพ ${Object.keys(data.images||{}).length} ภาพ\nรายงานที่มีอยู่แล้วจะถูกแทนที่ด้วยฉบับที่ใหม่กว่า`,"นำเข้า"))return;
+  busy(true,"กำลังนำเข้า…");let nr=0,ni=0,fail=0;
+  try{
+    for(const [iid,d] of Object.entries(data.images||{})){$("#busyText").textContent=`กำลังนำเข้าภาพ ${ni+1}`;try{if(mode==="cloud")await db.doc("images/"+iid).set({data:d,at:Date.now()});imgCache[iid]=d;ni++}catch(e){fail++}}
+    for(const id of ids){const r=data.reports[id],cur=reports[id];if(cur&&(cur.updatedAt||0)>(r.updatedAt||0))continue;$("#busyText").textContent=`กำลังนำเข้ารายงาน ${nr+1}/${ids.length}`;
+      try{if(mode==="cloud")await db.collection("reports").doc(id).set(r);reports[id]=r;nr++}catch(e){fail++}}
+    if(mode!=="cloud")localWrite();
+  }finally{busy(false)}
+  toast(`นำเข้าแล้ว ${nr} กะ ${ni} ภาพ${fail?` (ไม่สำเร็จ ${fail})`:""}`);render();
+}
+$("#jsonPicker").onchange=e=>{const f=e.target.files[0];if(f)importJson(f)};
 async function savePdf(pdf,name){
   const blob=pdf.output("blob");
   if(downloads){
@@ -1068,11 +1218,13 @@ app.addEventListener("input",e=>{
   setDirty(true);
 });
 app.addEventListener("change",async e=>{const t=e.target;
+  if(t.id==="dayPick"||t.id==="ovPick"){goDay(t.value);return}
   if(t.id==="mDate"||t.id==="mShift"){let nd=$("#mDate").value||today();if(nd<PROJECT.start||nd>PROJECT.end){toast("เลือกได้เฉพาะวันที่ในระยะสัญญา 1 ต.ค. 2569 – 30 ก.ย. 2570");nd=nd<PROJECT.start?PROJECT.start:lastDay();$("#mDate").value=nd}const ns=$("#mShift").value;if(nd>today()){toast("บันทึกล่วงหน้าไม่ได้ เลือกวันนี้หรือวันที่ผ่านมา");nd=today();$("#mDate").value=nd}
     if(!await confirmLeave()){t.value=t.id==="mDate"?draft.date:draft.shift;return}loadDraft(nd,ns);renderEdit()}});
 app.addEventListener("click",async e=>{
   const z=e.target.closest("[data-zoom]");if(z){$("#lbImg").src=z.currentSrc||z.src;$("#lb").classList.add("on");return}
   const o=e.target.closest("[data-open]");if(o){const [d,s]=o.dataset.open.split("|");dayView=d;dayShift=s;view="day";render();window.scrollTo(0,0);return}
+  const gd=e.target.closest("[data-goday]");if(gd){goDay(gd.dataset.goday);return}
   const dy=e.target.closest("[data-day]");if(dy){dayView=dy.dataset.day;view="day";render();window.scrollTo(0,0);return}
   const sh=e.target.closest("[data-shift]");if(sh){dayShift=sh.dataset.shift;renderDay();return}
   const p=e.target.closest("[data-pane]");if(p){pane=p.dataset.pane;renderEdit();return}
@@ -1086,7 +1238,7 @@ app.addEventListener("click",async e=>{
     case "pkDel":{const i=+b.dataset.i,x=draft.parkingCount.rows[i];if((num(x.car)||num(x.moto))&&!await ask(`ลบชั้น ${x.floor}?`,"ลบ"))break;draft.parkingCount.rows.splice(i,1);setDirty(true);renderEdit();break}
     case "pkLine":if(!hasPk(draft)){toast("ยังไม่มีข้อมูลรถจอดค้างคืน");break}copyText(pkText(draft));break;
     case "adminLogin":openPin("login");break;
-    case "adminLogout":if(view==="edit"&&!await confirmLeave())break;if(view==="edit"){loadDraft(draft.date,draft.shift)}clientView=true;view="overview";setMode();render();toast("กลับสู่หน้าลูกค้าแล้ว");break;
+    case "adminLogout":if(view==="edit"&&!await confirmLeave())break;if(view==="edit"){loadDraft(draft.date,draft.shift)}clientView=true;if(window.__auth){try{await window.__auth.signOut()}catch(e){}canWrite=false}view="overview";setMode();render();toast("กลับสู่หน้าลูกค้าแล้ว");break;
     case "add":{const k=b.dataset.s;draft.sections[k].push({id:uid(),text:"",status:defaultStatus(k),media:[]});setDirty(true);renderEdit();
       const boxes=app.querySelectorAll(`.item[data-h^="s:${k}:"] ${k==="parking"?"input":"textarea"}`);if(boxes.length)boxes[k==="parking"?boxes.length-2:boxes.length-1].focus();break}
     case "st":{const it=holder(h);it.status=it.status===b.dataset.v?"":b.dataset.v;setDirty(true);renderEdit();break}
@@ -1099,6 +1251,8 @@ app.addEventListener("click",async e=>{
     case "att":uploadTarget=h;$("#picker").value="";$("#picker").click();break;
     case "mprev":case "mnext":{const d=new Date(calMonth+"-01T00:00:00");d.setMonth(d.getMonth()+(act==="mprev"?-1:1));const m=iso(d).slice(0,7);if(m<PROJECT.start.slice(0,7)||m>PROJECT.end.slice(0,7))break;calMonth=m;renderHistory();break}
     case "csvMonth":exportCsv(calMonth+"-01",addDays(iso(new Date(+calMonth.slice(0,4),+calMonth.slice(5,7),1)),-1),`ข้อมูลรายงาน_${calMonth}`);break;
+    case "jsonOut":exportJson();break;
+    case "jsonIn":$("#jsonPicker").value="";$("#jsonPicker").click();break;
     case "csvAll":exportCsv(PROJECT.start,PROJECT.end,"ข้อมูลรายงาน_ทั้งสัญญา_2569-2570");break;
     case "wprev":weekStart=addDays(weekStart,-7);renderWeekly();break;
     case "wnext":weekStart=addDays(weekStart,7);renderWeekly();break;
@@ -1127,15 +1281,22 @@ async function pinSave(pin){const salt=uid(),rec={hash:await sha(salt+":"+pin),s
   if(mode==="cloud")await db.doc("secure/admin").set(rec);else localStorage.setItem("dr-admin-pin",JSON.stringify(rec))}
 const pinInput=(id,label)=>`<label class="f">${label}<input class="inp pin" id="${id}" type="password" inputmode="numeric" pattern="[0-9]*" maxlength="6" autocomplete="off"></label>`;
 function openPin(m){pinMode=m;$("#pinErr").textContent="";
+  if(m==="login"&&window.__auth){$("#pinTitle").textContent="เข้าสู่โหมดแอดมิน";$("#pinSub").textContent="ใช้อีเมลและรหัสผ่านของทีมงาน";
+    $("#pinFields").innerHTML=`<label class="f">อีเมล<input class="inp" id="authEmail" type="email" autocomplete="username" inputmode="email"></label><label class="f">รหัสผ่าน<input class="inp" id="authPw" type="password" autocomplete="current-password"></label>`;
+    $("#pinModal").classList.add("on");setTimeout(()=>{const i=$("#authEmail");if(i)i.focus()},50);return}
   if(m==="login"){$("#pinTitle").textContent="เข้าสู่โหมดแอดมิน";$("#pinSub").textContent="ใส่รหัสผ่าน 6 หลัก";$("#pinFields").innerHTML=pinInput("pin1","รหัสผ่าน")}
   else{$("#pinTitle").textContent="เปลี่ยนรหัสแอดมิน";$("#pinSub").textContent="รหัสใหม่ใช้ได้ทุกเครื่องทันที";$("#pinFields").innerHTML=pinInput("pin0","รหัสปัจจุบัน")+pinInput("pin1","รหัสใหม่ 6 หลัก")+pinInput("pin2","ยืนยันรหัสใหม่")}
-  $("#pinModal").classList.add("on");setTimeout(()=>$("#pinFields input").focus(),50)}
+  $("#pinModal").classList.add("on");setTimeout(()=>{const i=$("#pinFields input");if(i)i.focus()},50)}
 function closePin(){$("#pinModal").classList.remove("on");$("#pinFields").innerHTML=""}
 async function submitPin(){
   const err=t=>$("#pinErr").textContent=t,v=id=>($("#"+id)||{}).value||"";
   if(Date.now()<pinLockUntil){err(`ใส่รหัสผิดหลายครั้ง รอ ${Math.ceil((pinLockUntil-Date.now())/1000)} วินาที`);return}
   const btn=$("#pinOk");btn.disabled=true;
   try{
+    if(pinMode==="login"&&window.__auth){
+      const em=v("authEmail").trim(),pw=v("authPw");if(!em||!pw){err("กรอกอีเมลและรหัสผ่าน");return}
+      try{await window.__auth.signIn(em,pw)}catch(e){pinFails++;if(pinFails>=5){pinLockUntil=Date.now()+60000;pinFails=0}err(/invalid/i.test(String(e&&e.message))?"อีเมลหรือรหัสผ่านไม่ถูกต้อง":"เข้าสู่ระบบไม่สำเร็จ ("+errText(e)+")");return}
+      pinFails=0;canWrite=true;closePin();clientView=false;view="edit";setMode();render();window.scrollTo(0,0);toast("เข้าสู่โหมดแอดมินแล้ว");return}
     if(pinMode==="login"){
       if(!/^\d{6}$/.test(v("pin1"))){err("รหัสต้องเป็นตัวเลข 6 หลัก");return}
       if(await pinOk(v("pin1"))){pinFails=0;closePin();clientView=false;view="edit";setMode();render();window.scrollTo(0,0);toast("เข้าสู่โหมดแอดมินแล้ว")}
