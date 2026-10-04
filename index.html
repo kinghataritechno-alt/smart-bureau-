@@ -503,6 +503,16 @@ const iso=d=>{const x=new Date(d);x.setMinutes(x.getMinutes()-x.getTimezoneOffse
 const today=()=>iso(new Date());
 const addDays=(s,n)=>{const d=new Date(s+"T00:00:00");d.setDate(d.getDate()+n);return iso(d)};
 const mondayOf=s=>{const d=new Date(s+"T00:00:00");const w=(d.getDay()+6)%7;return addDays(s,-w)};
+/* weeks of the month as the client reports them: W1 = 1–7, W2 = 8–15, W3 = 16–23, W4 = 24–end */
+const WEEK_START_DAYS=[1,8,16,24];
+const monthEnd=s=>{const d=new Date(+s.slice(0,4),+s.slice(5,7),0);return iso(d)};
+function weekOf(s){const day=+s.slice(8,10),ym=s.slice(0,7);let n=0;WEEK_START_DAYS.forEach((d,i)=>{if(day>=d)n=i});
+  const start=`${ym}-${String(WEEK_START_DAYS[n]).padStart(2,"0")}`,end=n<3?`${ym}-${String(WEEK_START_DAYS[n+1]-1).padStart(2,"0")}`:monthEnd(s);
+  return{n:n+1,start,end,len:dayDiff(start,end)+1}}
+const prevWeekStart=s=>weekOf(addDays(weekOf(s).start,-1)).start;
+const nextWeekStart=s=>addDays(weekOf(s).end,1);
+const weekLabel=(s,o)=>{const w=weekOf(s);return `สัปดาห์ที่ ${w.n} ${thDate(w.start,{month:o==="short"?"short":"long",year:"numeric"})}`};
+const weekRange=(s,o)=>{const w=weekOf(s);return `${Number(w.start.slice(8))}–${Number(w.end.slice(8))} ${thDate(w.start,{month:o==="short"?"short":"long",year:"numeric"})}`};
 const nowHM=()=>{const d=new Date();return String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0")};
 const rid=(date,shift)=>date+"_"+shift;
 const PROJECT={start:"2026-10-01",end:"2027-09-30",name:"สัญญาบริหารอาคาร สำนักงานงบประมาณ"};
@@ -747,7 +757,7 @@ async function addFiles(files,h){
 
 /* ---------- analytics ---------- */
 function weekData(start){
-  const days=[...Array(7)].map((_,i)=>addDays(start,i));
+  const wk=weekOf(start);const days=[...Array(wk.len)].map((_,i)=>addDays(wk.start,i));
   const W={days,roundPct:{day:[],night:[]},issuesBySys:{},cmOpen:[],cmClosed:[],pm:{done:[],doing:[],wait:[]},service:[],cleaning:[],parking:[],parkCar:[],parkMoto:[],parkNights:0,plates:{},issues:[],tot:{rOk:0,rTot:0,cmO:0,cmC:0,pmDone:0,pmTot:0,svc:0,cln:0,park:0,reports:0}};
   days.forEach(d=>{
     let cmO=0,cmC=0,pmd=0,pmg=0,pmw=0,svc=0,cln=0,park=0,pc=0,pmo=0,hasNight=false;
@@ -864,9 +874,9 @@ function contractHTML(){
     <div><span>ความครบถ้วนของรายงาน</span><b>${cov}% <small>${got}/${need} กะ</small></b><div class="prog"><i style="width:${cov}%"></i></div></div></div></div>`;
 }
 function renderOverview(){
-  const ws=mondayOf(today()),W=weekData(ws),P=weekData(addDays(ws,-7));
+  const ws=weekOf(lastDay()).start,W=weekData(ws),P=weekData(prevWeekStart(ws));
   const latest=Object.values(reports).map(r=>normalize(clone(r))).sort((a,b)=>a.date===b.date?(a.shift==="night"?-1:1):(a.date<b.date?1:-1))[0];
-  let h=adminBar()+bannerHTML()+contractHTML()+`<div class="card pickday"><label class="f" for="ovPick">ดูรายงานตามวันที่</label><div class="row"><input class="inp" type="date" id="ovPick" min="${PROJECT.start}" max="${lastDay()}" value="${(prevReportDay(addDays(today(),1))||lastDay())}" style="max-width:220px"><span class="sub">เลือกวันที่ แล้วระบบจะเปิดรายงานของวันนั้น</span></div></div><div class="rowbar"><h1>ภาพรวมสัปดาห์นี้</h1><span class="sub">${thDate(ws,{day:"numeric",month:"long"})} – ${thDate(addDays(ws,6),{day:"numeric",month:"long",year:"numeric"})}</span></div>`+kpiHTML(kpiList(W,P));
+  let h=adminBar()+bannerHTML()+contractHTML()+`<div class="card pickday"><label class="f" for="ovPick">ดูรายงานตามวันที่</label><div class="row"><input class="inp" type="date" id="ovPick" min="${PROJECT.start}" max="${lastDay()}" value="${(prevReportDay(addDays(today(),1))||lastDay())}" style="max-width:220px"><span class="sub">เลือกวันที่ แล้วระบบจะเปิดรายงานของวันนั้น</span></div></div><div class="rowbar"><h1>ภาพรวมสัปดาห์นี้</h1><span class="sub">${weekLabel(ws)} · ${weekRange(ws)}</span></div>`+kpiHTML(kpiList(W,P));
   if(latest){const s=roundStats(latest),H=latest.handover;
     h+=`<div class="card"><h3>รายงานล่าสุด</h3><div class="row"><div style="flex:1;min-width:220px"><b>${thDate(latest.date)}</b> · ${SHIFTS[latest.shift]}<div class="sub">หัวหน้าเวร ${esc(H.head||"-")} · เดินเวร ${s.done}/${s.total}${s.issue?` · พบปัญหา ${s.issue}`:""} · งาน CM ${latest.sections.cm.length} · รถค้างคืน ${hasPk(latest)?pkSum(latest).total:latest.sections.parking.length} คัน</div></div>
       <button class="btn pri" data-open="${latest.date}|${latest.shift}">ดูรายงาน</button></div></div>`;
@@ -939,10 +949,10 @@ function renderDay(){
 }
 
 function renderWeekly(){
-  if(!weekStart)weekStart=mondayOf(today());
-  const W=weekData(weekStart),P=weekData(addDays(weekStart,-7));
+  if(!weekStart)weekStart=weekOf(lastDay()).start;
+  const W=weekData(weekStart),P=weekData(prevWeekStart(weekStart));
   app.innerHTML=adminBar()+bannerHTML()+`<div class="rowbar"><h1>สรุปรายสัปดาห์</h1>
-    <button class="btn sm" data-act="wprev" aria-label="สัปดาห์ก่อน">‹</button><b>${thDate(weekStart,{day:"numeric",month:"short"})} – ${thDate(addDays(weekStart,6),{day:"numeric",month:"short",year:"numeric"})}</b><button class="btn sm" data-act="wnext" aria-label="สัปดาห์ถัดไป">›</button>
+    <button class="btn sm" data-act="wprev" aria-label="สัปดาห์ก่อน" ${weekStart<=PROJECT.start?"disabled":""}>‹</button><b>${weekLabel(weekStart,"short")} <span class="sub" style="font-weight:500">(${weekRange(weekStart,"short")})</span></b><button class="btn sm" data-act="wnext" aria-label="สัปดาห์ถัดไป" ${weekOf(weekStart).end>=lastDay()?"disabled":""}>›</button>
     <button class="btn gold" data-act="wpdf">ดาวน์โหลด PDF (A4 แนวนอน)</button></div>
     ${W.tot.reports?"":`<div class="banner">ยังไม่มีรายงานในสัปดาห์นี้</div>`}
     ${kpiHTML(kpiList(W,P))}${chartsHTML(W,false)}
@@ -1192,16 +1202,16 @@ function pdfDaily(r0){return runPdf(async step=>{
   await savePdf(pdf,`รายงานประจำวัน_${r.date}_${r.shift==="day"?"กะเช้า":"กะบ่ายดึก"}.pdf`);
 })}
 function pdfWeekly(ws){return runPdf(async step=>{
-  const W=weekData(ws),P=weekData(addDays(ws,-7));
+  const W=weekData(ws),P=weekData(prevWeekStart(ws)),wk=weekOf(ws);
   step("สรุปและกราฟ");
-  const html=`${tplHeader("สรุปผลการดำเนินงานรายสัปดาห์",[["เลขที่",`WR-${ws.replace(/-/g,"")}`],["ช่วงวันที่",`${thDate(ws,{day:"numeric",month:"short"})} – ${thDate(addDays(ws,6),{day:"numeric",month:"short",year:"numeric"})}`],["จัดทำโดย","งานบริหารอาคาร"]])}
+  const html=`${tplHeader("สรุปผลการดำเนินงานรายสัปดาห์",[["เลขที่",`WR-${wk.start.slice(0,7).replace("-","")}-W${wk.n}`],["สัปดาห์",weekLabel(ws,"short")],["ช่วงวันที่",weekRange(ws,"short")]])}
     ${kpiHTML(kpiList(W,P))}${chartsHTML(W,true)}${tplFooter(1,1)}`;
   const shot=await snap(html,"wk",1123);
   step("จัดหน้า");
   const {jsPDF}=window.jspdf;const pdf=new jsPDF({unit:"mm",format:"a4",orientation:"landscape",compress:true});
   pdf.addImage(shot.data,"JPEG",0,0,297,210);
   step("บันทึกไฟล์");busy(false);
-  await savePdf(pdf,`สรุปรายสัปดาห์_${ws}.pdf`);
+  await savePdf(pdf,`สรุปรายสัปดาห์_${wk.start.slice(0,7)}_W${wk.n}.pdf`);
 })}
 
 /* ---------- in-page confirm (window.confirm is blocked inside the artifact frame) ---------- */
@@ -1266,8 +1276,8 @@ app.addEventListener("click",async e=>{
     case "jsonPaste":$("#pasteErr").textContent="";$("#pasteBox").value="";$("#pasteModal").classList.add("on");setTimeout(()=>$("#pasteBox").focus(),50);break;
     case "jsonIn":$("#jsonPicker").value="";$("#jsonPicker").click();break;
     case "csvAll":exportCsv(PROJECT.start,PROJECT.end,"ข้อมูลรายงาน_ทั้งสัญญา_2569-2570");break;
-    case "wprev":weekStart=addDays(weekStart,-7);renderWeekly();break;
-    case "wnext":weekStart=addDays(weekStart,7);renderWeekly();break;
+    case "wprev":if(weekStart>PROJECT.start){weekStart=prevWeekStart(weekStart);renderWeekly()}break;
+    case "wnext":if(weekOf(weekStart).end<lastDay()){weekStart=nextWeekStart(weekStart);renderWeekly()}break;
     case "wpdf":pdfWeekly(weekStart);break;
     case "back":calMonth=dayView.slice(0,7);view="history";render();break;
     case "vline":copyText(lineText(reports[rid(dayView,dayShift)]));break;
