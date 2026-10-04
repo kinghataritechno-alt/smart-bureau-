@@ -416,6 +416,12 @@ html{-webkit-tap-highlight-color:transparent}
   <div id="askMsg" style="font-size:17px;white-space:pre-line"></div>
   <div class="row" style="justify-content:flex-end;margin-top:16px"><button class="btn ghost" id="askNo">ยกเลิก</button><button class="btn pri" id="askYes">ยืนยัน</button></div>
 </div></div>
+<div class="modal" id="lineModal" role="dialog" aria-modal="true" aria-labelledby="lineTitle"><div class="box" style="width:min(560px,100%)">
+  <h2 id="lineTitle">ข้อความสำหรับส่ง LINE</h2><div class="sub" id="lineSub">กด “ส่งไป LINE” เพื่อเลือกกลุ่มใน LINE ได้ทันที หรือกด “คัดลอก” แล้วไปวางในแชท</div>
+  <textarea class="inp" id="lineText" readonly style="min-height:220px;margin-top:10px;font-size:15px;line-height:1.5"></textarea>
+  <div class="err" id="lineMsg" role="status" style="color:var(--ok)"></div>
+  <div class="row" style="justify-content:flex-end;margin-top:10px;flex-wrap:wrap"><button class="btn ghost" id="lineClose">ปิด</button><button class="btn" id="lineCopy">คัดลอก</button><button class="btn pri" id="lineShare">ส่งไป LINE</button></div>
+</div></div>
 <div class="modal" id="pasteModal" role="dialog" aria-modal="true" aria-labelledby="pasteTitle"><div class="box" style="width:min(560px,100%)">
   <h2 id="pasteTitle">วางข้อมูลสำรอง</h2><div class="sub">คัดลอกข้อความข้อมูลสำรอง (JSON) จากหน้าไฟล์ติดตั้ง แล้ววางในช่องนี้</div>
   <textarea class="inp" id="pasteBox" style="min-height:160px;margin-top:10px;font-size:13px" placeholder='{"app":"building-ops-report", …}'></textarea>
@@ -1046,11 +1052,22 @@ function lineText(r){
     items.forEach((it,i)=>{const st=ST[it.status];t+=`${i+1}. ${s.key==="parking"?(it.plate||"ไม่ระบุทะเบียน")+(it.loc?" "+it.loc:"")+" ":""}${(it.text||"").trim()}${st?` ${st.icon} ${st.label}`:""}\n`})});
   return t.trim();
 }
-async function copyText(t){
-  try{await navigator.clipboard.writeText(t);toast("คัดลอกแล้ว วางใน LINE ได้เลย");return}catch(e){}
-  const ta=document.createElement("textarea");ta.value=t;ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);ta.select();
-  let ok=false;try{ok=document.execCommand("copy")}catch(e){}ta.remove();toast(ok?"คัดลอกแล้ว วางใน LINE ได้เลย":"คัดลอกอัตโนมัติไม่ได้ในหน้านี้");
+/* show the text in a dialog; every action there is a fresh tap, which iPad Safari needs for clipboard and share */
+function copyText(t){
+  $("#lineText").value=t;$("#lineMsg").textContent="";$("#lineModal").classList.add("on");
+  $("#lineShare").textContent=navigator.share?"ส่งไป LINE":"เปิด LINE";
 }
+function selectLineText(){const ta=$("#lineText");ta.removeAttribute("readonly");ta.focus();ta.setSelectionRange(0,ta.value.length);ta.select();return ta}
+$("#lineClose").onclick=()=>$("#lineModal").classList.remove("on");
+$("#lineCopy").onclick=()=>{const t=$("#lineText").value,msg=$("#lineMsg");
+  const done=ok=>{msg.style.color=ok?"var(--ok)":"var(--warn)";msg.textContent=ok?"คัดลอกแล้ว ไปที่ LINE แตะค้างในช่องพิมพ์ แล้วเลือก “วาง”":"คัดลอกอัตโนมัติไม่ได้ ข้อความถูกเลือกไว้แล้ว แตะค้างที่ข้อความแล้วเลือก “คัดลอก”";const ta=$("#lineText");ta.setAttribute("readonly","");if(!ok)selectLineText()};
+  let ok=false;try{const ta=selectLineText();ok=document.execCommand("copy");ta.blur()}catch(e){}
+  if(ok){done(true);return}
+  if(navigator.clipboard&&navigator.clipboard.writeText)navigator.clipboard.writeText(t).then(()=>done(true),()=>done(false));else done(false)};
+$("#lineShare").onclick=async()=>{const t=$("#lineText").value,msg=$("#lineMsg");
+  if(navigator.share){try{await navigator.share({text:t});msg.style.color="var(--ok)";msg.textContent="ส่งแล้ว";return}catch(e){if(e&&e.name==="AbortError")return}}
+  location.href="https://line.me/R/share?text="+encodeURIComponent(t)};
+
 
 /* ---------- PDF (A4 template) ---------- */
 function tplHeader(title,meta){
